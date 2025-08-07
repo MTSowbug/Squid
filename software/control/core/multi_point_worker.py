@@ -38,6 +38,7 @@ except:
 
 
 class MultiPointWorker(QObject):
+    MAX_CAMERA_RECOVERY_ATTEMPTS = 3
 
     finished = Signal()
     image_to_display = Signal(np.ndarray)
@@ -660,54 +661,78 @@ class MultiPointWorker(QObject):
                 self._log.error("Frame callback never set _have_last_triggered_image callback! Aborting acquisition.")
                 self.multiPointController.request_abort_aquisition()
                 return
-        with self._timing.get_timer("get_ready_for_trigger re-check"):
-            # This should be a noop - we have the frame already.  Still, check!
-            while not self.camera.get_ready_for_trigger():
-                self._sleep(0.001)
 
-            self._ready_for_next_trigger.clear()
-        with self._timing.get_timer("current_capture_info ="):
-            # Even though the capture time will be slightly after this, we need to capture and set the capture info
-            # before the trigger to be 100% sure the callback doesn't stomp on it.
-            # NOTE(imo): One level up from acquire_camera_image, we have acquire_pos.  We're careful to use that as
-            # much as we can, but don't use it here because we'd rather take the position as close as possible to the
-            # real capture time for the image info.  Ideally we'd use this position for the caller's acquire_pos as well.
-            current_capture_info = CaptureInfo(
-                position=self.stage.get_pos(),
-                z_index=k,
-                capture_time=time.time(),
-                configuration=config,
-                save_directory=current_path,
-                file_id=file_ID,
-                region_id=region_id,
-                fov=fov,
-                configuration_idx=config_idx,
-            )
-            self._current_capture_info = current_capture_info
-        with self._timing.get_timer("send_trigger"):
-            self.camera.send_trigger(illumination_time=camera_illumination_time)
+        recovery_attempts = self.MAX_CAMERA_RECOVERY_ATTEMPTS
+        while True:
+            with self._timing.get_timer("get_ready_for_trigger re-check"):
+                # This should be a noop - we have the frame already.  Still, check!
+                while not self.camera.get_ready_for_trigger():
+                    self._sleep(0.001)
 
-        with self._timing.get_timer("exposure_time_done_sleep_hw or wait_for_image_sw"):
-            if self.liveController.trigger_mode == TriggerMode.HARDWARE:
-                exposure_done_time = time.time() + self.camera.get_total_frame_time() / 1e3
-                # Even though we can do overlapping triggers, we want to make sure that we don't move before our exposure
-                # is done.  So we still need to at least sleep for the total frame time corresponding to this exposure.
-                self._sleep(max(0.0, exposure_done_time - time.time()))
-            else:
-                # In SW trigger mode (or anything not HARDWARE mode), there's indeterminism in the trigger timing.
-                # To overcome this, just wait until the frame for this capture actually comes into the image
-                # callback.  That way we know we have it.  This also helps by making sure the illumination for this
-                # frame is on from before the trigger until after we get the frame (which guarantees it will be on
-                # for the full exposure).
-                #
-                # If we wait for longer than 5x the exposure + 2 seconds, abort the acquisition because something is
-                # wrong.
-                non_hw_frame_timeout = 5 * self.camera.get_total_frame_time() / 1e3 + 2
-                if not self._ready_for_next_trigger.wait(non_hw_frame_timeout):
-                    self._log.error("Timed out waiting {non_hw_frame_timeout} [s] for a frame, aborting acquisition.")
+                self._ready_for_next_trigger.clear()
+
+            with self._timing.get_timer("current_capture_info ="):
+                # Even though the capture time will be slightly after this, we need to capture and set the capture info
+                # before the trigger to be 100% sure the callback doesn't stomp on it.
+                # NOTE(imo): One level up from acquire_camera_image, we have acquire_pos.  We're careful to use that as
+                # much as we can, but don't use it here because we'd rather take the position as close as possible to the
+                # real capture time for the image info.  Ideally we'd use this position for the caller's acquire_pos as well.
+                current_capture_info = CaptureInfo(
+                    position=self.stage.get_pos(),
+                    z_index=k,
+                    capture_time=time.time(),
+                    configuration=config,
+                    save_directory=current_path,
+                    file_id=file_ID,
+                    region_id=region_id,
+                    fov=fov,
+                    configuration_idx=config_idx,
+                )
+                self._current_capture_info = current_capture_info
+
+            with self._timing.get_timer("send_trigger"):
+                self.camera.send_trigger(illumination_time=camera_illumination_time)
+
+            with self._timing.get_timer("exposure_time_done_sleep_hw or wait_for_image_sw"):
+                if self.liveController.trigger_mode == TriggerMode.HARDWARE:
+                    exposure_done_time = time.time() + self.camera.get_total_frame_time() / 1e3
+                    # Even though we can do overlapping triggers, we want to make sure that we don't move before our exposure
+                    # is done.  So we still need to at least sleep for the total frame time corresponding to this exposure.
+                    self._sleep(max(0.0, exposure_done_time - time.time()))
+                    break
+                else:
+                    # In SW trigger mode (or anything not HARDWARE mode), there's indeterminism in the trigger timing.
+                    # To overcome this, just wait until the frame for this capture actually comes into the image
+                    # callback.  That way we know we have it.  This also helps by making sure the illumination for this
+                    # frame is on from before the trigger until after we get the frame (which guarantees it will be on
+                    # for the full exposure).
+                    #
+                    # If we wait for longer than 5x the exposure + 2 seconds, try to recover the camera because
+                    # something is wrong.
+                    non_hw_frame_timeout = 5 * self.camera.get_total_frame_time() / 1e3 + 2
+                    if self._ready_for_next_trigger.wait(non_hw_frame_timeout):
+                        break
+
+                    self._log.error(
+                        "Timed out waiting %s [s] for a frame. Attempting camera recovery.",
+                        non_hw_frame_timeout,
+                    )
+                    if self.liveController.trigger_mode == TriggerMode.SOFTWARE:
+                        self.liveController.turn_off_illumination()
+
+                    if recovery_attempts > 0 and self._attempt_camera_recovery():
+                        recovery_attempts -= 1
+                        if self.liveController.trigger_mode == TriggerMode.SOFTWARE:
+                            self.liveController.turn_on_illumination()
+                            self.wait_till_operation_is_completed()
+                        continue
+
+                    self._log.error("Camera recovery failed, aborting acquisition.")
                     self.multiPointController.request_abort_aquisition()
                     # Let this fall through so we still turn off illumination.  Let the caller actually break out
                     # of the acquisition.
+                    break
+            break
 
         # turn off the illumination if using software trigger
         if self.liveController.trigger_mode == TriggerMode.SOFTWARE:
@@ -720,6 +745,22 @@ class MultiPointWorker(QObject):
     def _sleep(self, sec):
         self._log.debug(f"Sleeping for {sec} [s]")
         self.thread().usleep(max(1, round(sec * 1e6)))
+
+    def _attempt_camera_recovery(self) -> bool:
+        """Try to recover the camera after a frame timeout."""
+        self._log.warning("Attempting to recover camera by restarting stream")
+        try:
+            self.camera.stop_streaming()
+        except Exception:
+            self._log.exception("Failed to stop camera during recovery")
+        # Give the hardware a moment to settle
+        self._sleep(0.5)
+        try:
+            self.camera.start_streaming()
+            return True
+        except Exception:
+            self._log.exception("Failed to restart camera stream during recovery")
+            return False
 
     def acquire_rgb_image(self, config, file_ID, current_path, current_round_images, k):
         # go through the channels
