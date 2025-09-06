@@ -154,3 +154,9 @@ To start the program when no hardware is connected, use
 ```
 python3 main_hcs.py --simulation
 ```
+
+To run a multipoint acquisition without launching the GUI (headless mode), use
+```
+python3 main_hcs.py --run-acquisition --base-path /path/to/output --experiment-id my_experiment [--coordinates coordinates.csv]
+```
+This will save data directly without opening the GUI. You can combine this with `--simulation` to use simulated hardware.

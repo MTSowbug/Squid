@@ -29,6 +29,12 @@ Ubuntu 22.04 is the most tested platform. Other Linux systems should work but pe
 See [README](https://github.com/Cephla-Lab/Squid/blob/master/software/README.md) in `/software` directory for instructions. Toupcam and laser auto-focus camera dependencies will be installed automatically when you run the setup script.
 
 After installation, you can run `python3 /software/tools/script_create_desktop_shortcut.py` to create a shortcut on Desktop.
+
+To run a multipoint acquisition without launching the GUI (headless mode), use
+```
+python3 software/main_hcs.py --run-acquisition --base-path /path/to/output --experiment-id my_experiment [--coordinates coordinates.csv]
+```
+This saves data without opening the GUI. Additional options are documented in [software/README.md](software/README.md).
 #### Setting up and run Squid software on Windows
 See this [post](https://forum.squid-imaging.org/t/setting-up-the-software-on-a-windows-computer/77) on Cephla forum for Windows instructions.
 
