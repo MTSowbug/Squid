@@ -153,9 +153,17 @@ if __name__ == "__main__":
     parser.add_argument("--use-piezo", action="store_true", help="Use piezo for Z stacks")
     parser.add_argument("--autofocus", action="store_true", help="Enable contrast-based autofocus")
     parser.add_argument("--reflection-af", action="store_true", help="Enable reflection autofocus")
+    parser.add_argument(
+        "--no-camera-fps",
+        action="store_true",
+        help="Disable printing camera FPS to the terminal",
+    )
     args = parser.parse_args()
 
     log = squid.logging.get_logger("main_hcs")
+
+    if args.no_camera_fps:
+        control._def.PRINT_CAMERA_FPS = False
 
     if args.verbose:
         log.info("Turning on debug logging.")
