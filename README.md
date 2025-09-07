@@ -35,6 +35,7 @@ To run a multipoint acquisition without launching the GUI (headless mode), use
 python3 software/main_hcs.py --run-acquisition --base-path /path/to/output --experiment-id my_experiment [--coordinates coordinates.csv]
 ```
 This saves data without opening the GUI. Additional options are documented in [software/README.md](software/README.md).
+Use `--no-camera-fps` to suppress camera FPS messages in the terminal.
 #### Setting up and run Squid software on Windows
 See this [post](https://forum.squid-imaging.org/t/setting-up-the-software-on-a-windows-computer/77) on Cephla forum for Windows instructions.
 
