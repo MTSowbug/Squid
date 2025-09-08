@@ -38,6 +38,36 @@ def show_config(cfp, configpath, main_gui):
     config_widget.exec_()
 
 
+def show_move_to_coordinates(main_gui):
+    """Prompt the user for a set of coordinates and move the stage."""
+    dialog = QDialog(main_gui)
+    dialog.setWindowTitle("Move to Coordinates")
+    form = QFormLayout(dialog)
+    x_edit = QLineEdit()
+    y_edit = QLineEdit()
+    z_edit = QLineEdit()
+    form.addRow("X (mm)", x_edit)
+    form.addRow("Y (mm)", y_edit)
+    form.addRow("Z (mm)", z_edit)
+    buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+    form.addWidget(buttons)
+
+    def on_accept():
+        try:
+            x = float(x_edit.text())
+            y = float(y_edit.text())
+            z = float(z_edit.text())
+        except ValueError:
+            QMessageBox.warning(dialog, "Invalid Input", "Please enter numeric coordinates.")
+            return
+        main_gui.microscope.move_to_position(x, y, z)
+        dialog.accept()
+
+    buttons.accepted.connect(on_accept)
+    buttons.rejected.connect(dialog.reject)
+    dialog.exec_()
+
+
 def load_scan_coordinates(csv_path, microscope):
     """Load scan coordinates from a CSV file.
 
@@ -209,6 +239,10 @@ if __name__ == "__main__":
     stage_utils_action = QAction("Stage Utils", win)
     stage_utils_action.triggered.connect(win.stageUtils.show)
     microscope_utils_menu.addAction(stage_utils_action)
+
+    move_to_action = QAction("Move to Coordinates", win)
+    move_to_action.triggered.connect(lambda: show_move_to_coordinates(win))
+    microscope_utils_menu.addAction(move_to_action)
 
     try:
         csw = win.cswWindow
